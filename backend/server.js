@@ -271,8 +271,8 @@ app.post('/api/v1/tasks/submit', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('Task submission error:', error);
-    res.status(500).json({ error: 'Failed to submit task' });
+    console.error('Task submission error:', error.message, error);
+    res.status(500).json({ error: 'Failed to submit task', detail: error.message });
   }
 });
 

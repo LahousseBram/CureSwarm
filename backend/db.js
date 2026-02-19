@@ -550,13 +550,13 @@ async function generateHypothesisTasks(divisionId) {
 
 async function submitFinding({ taskId, agentId, summary, confidence, contradictions, researchGaps, citations, studyAssessment }) {
   // Check for duplicate finding per task
-  const { data: existingFinding } = await supabase
+  const { data: existingFindings } = await supabase
     .from('findings')
     .select('id')
     .eq('task_id', taskId)
-    .single();
+    .limit(1);
   
-  if (existingFinding) {
+  if (existingFindings && existingFindings.length > 0) {
     throw new Error('A finding already exists for this task');
   }
 
@@ -655,14 +655,14 @@ async function submitFinding({ taskId, agentId, summary, confidence, contradicti
 
 async function submitQCReview({ findingId, reviewerId, verdict, reasoning }) {
   // Check for duplicate QC review
-  const { data: existingReview } = await supabase
+  const { data: existingReviews } = await supabase
     .from('qc_reviews')
     .select('id')
     .eq('finding_id', findingId)
     .eq('reviewer_id', reviewerId)
-    .single();
+    .limit(1);
   
-  if (existingReview) {
+  if (existingReviews && existingReviews.length > 0) {
     throw new Error('Agent has already reviewed this finding');
   }
 
