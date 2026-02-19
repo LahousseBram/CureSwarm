@@ -11,6 +11,7 @@ const db = require('./db');
 const { verifyDOI, isValidDOIFormat } = require('./doi-verify');
 const { generateSynthesisTasks, getSynthesisOpportunities } = require('./synthesis');
 const { AMR_MISSION, AMR_DIVISIONS, AMR_TASKS } = require('./missions/amr');
+const { generateDivisionReport } = require('./reports');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -157,7 +158,7 @@ app.post('/api/v1/tasks/submit', async (req, res) => {
     }
     
     if (type === 'finding') {
-      const { taskId, summary, confidence, contradictions, researchGaps, citations } = req.body;
+      const { taskId, summary, confidence, contradictions, researchGaps, citations, studyAssessment } = req.body;
       
       if (!taskId || !summary || !confidence) {
         return res.status(400).json({ error: 'Task ID, summary, and confidence are required' });
@@ -198,7 +199,8 @@ app.post('/api/v1/tasks/submit', async (req, res) => {
         confidence,
         contradictions: contradictions?.trim() || null,
         researchGaps: researchGaps?.trim() || null,
-        citations: verifiedCitations
+        citations: verifiedCitations,
+        studyAssessment: studyAssessment || null
       });
       
       res.json({
@@ -228,6 +230,33 @@ app.post('/api/v1/tasks/submit', async (req, res) => {
       res.json({
         success: true,
         message: 'QC review submitted successfully!'
+      });
+      
+    } else if (type === 'hypothesis') {
+      const { taskId, hypothesis, supportingEvidence, experimentalApproach, expectedImpact, feasibility } = req.body;
+      
+      if (!taskId || !hypothesis || !supportingEvidence || !experimentalApproach || !feasibility) {
+        return res.status(400).json({ error: 'Task ID, hypothesis, supporting evidence, experimental approach, and feasibility are required' });
+      }
+      
+      if (feasibility < 1 || feasibility > 5) {
+        return res.status(400).json({ error: 'Feasibility must be between 1 and 5' });
+      }
+      
+      const hypothesisRecord = await db.submitHypothesis({
+        taskId,
+        agentId,
+        hypothesis: hypothesis.trim(),
+        supportingEvidence: supportingEvidence.trim(),
+        experimentalApproach: experimentalApproach.trim(),
+        expectedImpact: expectedImpact?.trim() || null,
+        feasibility
+      });
+      
+      res.json({
+        success: true,
+        hypothesis: hypothesisRecord,
+        message: 'Hypothesis submitted successfully!'
       });
       
     } else {
@@ -294,8 +323,9 @@ app.get('/api/v1/findings', async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const divisionId = req.query.divisionId || null;
+    const minMethodology = req.query.minMethodology ? parseInt(req.query.minMethodology) : null;
     
-    const result = await db.getFindings(page, limit, divisionId);
+    const result = await db.getFindings(page, limit, divisionId, minMethodology);
     res.json({ success: true, ...result });
   } catch (error) {
     console.error('Get findings error:', error);
@@ -341,6 +371,43 @@ app.get('/api/v1/divisions', async (req, res) => {
   } catch (error) {
     console.error('Get divisions error:', error);
     res.status(500).json({ error: 'Failed to get divisions' });
+  }
+});
+
+// Get all hypotheses with pagination
+app.get('/api/v1/hypotheses', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const divisionId = req.query.divisionId || null;
+    
+    const result = await db.getHypotheses(page, limit, divisionId);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Get hypotheses error:', error);
+    res.status(500).json({ error: 'Failed to get hypotheses' });
+  }
+});
+
+// Get specific hypothesis
+app.get('/api/v1/hypotheses/:id', async (req, res) => {
+  try {
+    const hypothesis = await db.getHypothesis(req.params.id);
+    res.json({ success: true, hypothesis });
+  } catch (error) {
+    console.error('Get hypothesis error:', error);
+    res.status(500).json({ error: 'Failed to get hypothesis' });
+  }
+});
+
+// Get division report
+app.get('/api/v1/divisions/:id/report', async (req, res) => {
+  try {
+    const report = await generateDivisionReport(req.params.id);
+    res.json({ success: true, report });
+  } catch (error) {
+    console.error('Get division report error:', error);
+    res.status(500).json({ error: 'Failed to generate division report' });
   }
 });
 

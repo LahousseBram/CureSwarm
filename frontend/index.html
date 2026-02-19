@@ -493,6 +493,70 @@
             </span>
         );
 
+        // Top Hypotheses Component
+        const TopHypotheses = () => {
+            const [hypotheses, setHypotheses] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const fetchTopHypotheses = async () => {
+                    try {
+                        const response = await api.get('/hypotheses?limit=3');
+                        setHypotheses(response.hypotheses || []);
+                    } catch (error) {
+                        console.error('Error fetching top hypotheses:', error);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+
+                fetchTopHypotheses();
+            }, []);
+
+            if (loading || hypotheses.length === 0) return null;
+
+            return (
+                <div className="card">
+                    <div className="card-header">
+                        <h2 className="card-title">Top Hypotheses</h2>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        {hypotheses.map((hypothesis, index) => (
+                            <div key={hypothesis.id} style={{ 
+                                padding: '1rem', 
+                                background: 'var(--bg-tertiary)', 
+                                borderRadius: '0.25rem',
+                                borderLeft: '3px solid var(--accent-teal)'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                    <Badge variant="info">#{index + 1}</Badge>
+                                    <Badge variant={hypothesis.feasibility >= 4 ? 'success' : 'warning'}>
+                                        Feasibility: {hypothesis.feasibility}/5
+                                    </Badge>
+                                    <Badge variant="secondary">
+                                        👍 {hypothesis.votes_up} 👎 {hypothesis.votes_down}
+                                    </Badge>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                                        {hypothesis.divisions?.name}
+                                    </span>
+                                </div>
+                                <p style={{ 
+                                    color: 'var(--text-primary)', 
+                                    margin: 0,
+                                    fontSize: '0.9rem',
+                                    lineHeight: '1.4'
+                                }}>
+                                    {hypothesis.hypothesis.length > 150 
+                                        ? hypothesis.hypothesis.substring(0, 150) + '...' 
+                                        : hypothesis.hypothesis}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
         // Overview Tab Component
         const OverviewTab = () => {
             const [stats, setStats] = useState(null);
@@ -567,6 +631,11 @@
                                             </span>
                                             <span style={{ color: 'var(--text-muted)' }}>
                                                 {division.completedTasks}/{division.totalTasks} tasks
+                                                {division.avgMethodologyScore && (
+                                                    <span style={{ marginLeft: '0.5rem' }}>
+                                                        • Quality: {division.avgMethodologyScore.toFixed(1)}/5
+                                                    </span>
+                                                )}
                                             </span>
                                         </div>
                                         <div className="progress-bar">
@@ -590,6 +659,8 @@
                             </div>
                         </div>
                     )}
+
+                    <TopHypotheses />
                 </div>
             );
         };
@@ -693,6 +764,21 @@
                                             <div className="finding-meta">
                                                 {getConfidenceBadge(finding.confidence)}
                                                 {getQcStatusBadge(finding.qc_status)}
+                                                {finding.study_assessment?.methodology_score && (
+                                                    <Badge variant={finding.study_assessment.methodology_score >= 4 ? 'success' : finding.study_assessment.methodology_score >= 3 ? 'warning' : 'danger'}>
+                                                        Methodology: {finding.study_assessment.methodology_score}/5
+                                                    </Badge>
+                                                )}
+                                                {finding.study_assessment?.clinical_relevance && (
+                                                    <Badge variant={finding.study_assessment.clinical_relevance === 'direct' ? 'success' : 'info'}>
+                                                        {finding.study_assessment.clinical_relevance}
+                                                    </Badge>
+                                                )}
+                                                {finding.study_assessment?.study_types && finding.study_assessment.study_types.length > 0 && (
+                                                    <Badge variant="secondary">
+                                                        {finding.study_assessment.study_types.join(', ')}
+                                                    </Badge>
+                                                )}
                                                 <Badge variant="info">{finding.divisions?.name || 'Unknown Division'}</Badge>
                                                 <span style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
                                                     by {finding.agents?.name || 'Unknown Agent'}
@@ -773,6 +859,169 @@
                                         </button>
                                     </div>
                                 )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Hypotheses Tab Component
+        const HypothesesTab = () => {
+            const [hypotheses, setHypotheses] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [page, setPage] = useState(1);
+            const [totalPages, setTotalPages] = useState(1);
+            const [selectedDivision, setSelectedDivision] = useState('');
+            const [divisions, setDivisions] = useState([]);
+
+            useEffect(() => {
+                const fetchDivisions = async () => {
+                    try {
+                        const response = await api.get('/divisions');
+                        setDivisions(response.divisions || []);
+                    } catch (error) {
+                        console.error('Error fetching divisions:', error);
+                    }
+                };
+                fetchDivisions();
+            }, []);
+
+            useEffect(() => {
+                const fetchHypotheses = async () => {
+                    setLoading(true);
+                    try {
+                        const query = new URLSearchParams({
+                            page,
+                            limit: 10,
+                            ...(selectedDivision && { divisionId: selectedDivision })
+                        });
+                        const response = await api.get(`/hypotheses?${query}`);
+                        setHypotheses(response.hypotheses || []);
+                        setTotalPages(response.totalPages || 1);
+                    } catch (error) {
+                        console.error('Error fetching hypotheses:', error);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+
+                fetchHypotheses();
+            }, [page, selectedDivision]);
+
+            const getFeasibilityBadge = (feasibility) => {
+                if (feasibility >= 4) return <Badge variant="success">{feasibility}/5</Badge>;
+                if (feasibility >= 3) return <Badge variant="warning">{feasibility}/5</Badge>;
+                return <Badge variant="danger">{feasibility}/5</Badge>;
+            };
+
+            const getStatusBadge = (status) => {
+                const variants = {
+                    proposed: 'info',
+                    approved: 'success',
+                    rejected: 'danger'
+                };
+                return <Badge variant={variants[status] || 'info'}>{status}</Badge>;
+            };
+
+            if (loading) return <LoadingSpinner />;
+
+            return (
+                <div>
+                    <div className="card">
+                        <div className="card-header">
+                            <h2 className="card-title">Research Hypotheses</h2>
+                            <div style={{ display: 'flex', gap: '1rem' }}>
+                                <select 
+                                    className="input" 
+                                    value={selectedDivision} 
+                                    onChange={(e) => {
+                                        setSelectedDivision(e.target.value);
+                                        setPage(1);
+                                    }}
+                                >
+                                    <option value="">All Divisions</option>
+                                    {divisions.map(div => (
+                                        <option key={div.id} value={div.id}>{div.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        {hypotheses.length === 0 ? (
+                            <div className="empty-state">
+                                <h3>No hypotheses yet</h3>
+                                <p>Hypotheses are generated when divisions have 15+ quality findings with research gaps.</p>
+                            </div>
+                        ) : (
+                            <div>
+                                {hypotheses.map(hypothesis => (
+                                    <div key={hypothesis.id} className="finding-card">
+                                        <div className="finding-header">
+                                            <div className="finding-meta">
+                                                {getFeasibilityBadge(hypothesis.feasibility)}
+                                                {getStatusBadge(hypothesis.status)}
+                                                <Badge variant="info">
+                                                    👍 {hypothesis.votes_up} 👎 {hypothesis.votes_down}
+                                                </Badge>
+                                            </div>
+                                            <div className="finding-author">
+                                                by {hypothesis.agents?.name || 'Unknown'} • {hypothesis.divisions?.name || 'Unknown Division'}
+                                            </div>
+                                        </div>
+
+                                        <div className="finding-content">
+                                            <h4 style={{ color: 'var(--accent-teal)', marginBottom: '1rem' }}>
+                                                {hypothesis.hypothesis}
+                                            </h4>
+
+                                            <div style={{ marginBottom: '1rem' }}>
+                                                <strong>Supporting Evidence:</strong>
+                                                <p style={{ marginTop: '0.5rem' }}>{hypothesis.supporting_evidence}</p>
+                                            </div>
+
+                                            <div style={{ marginBottom: '1rem' }}>
+                                                <strong>Experimental Approach:</strong>
+                                                <p style={{ marginTop: '0.5rem' }}>{hypothesis.experimental_approach}</p>
+                                            </div>
+
+                                            {hypothesis.expected_impact && (
+                                                <div style={{ marginBottom: '1rem' }}>
+                                                    <strong>Expected Impact:</strong>
+                                                    <p style={{ marginTop: '0.5rem' }}>{hypothesis.expected_impact}</p>
+                                                </div>
+                                            )}
+
+                                            <div className="finding-stats">
+                                                <span>Feasibility: {hypothesis.feasibility}/5</span>
+                                                <span>•</span>
+                                                <span>Votes: +{hypothesis.votes_up} -{hypothesis.votes_down}</span>
+                                                <span>•</span>
+                                                <span>{new Date(hypothesis.created_at).toLocaleDateString()}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                <div className="pagination">
+                                    <button 
+                                        className="button secondary" 
+                                        disabled={page === 1}
+                                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                                    >
+                                        Previous
+                                    </button>
+                                    <span className="pagination-info">
+                                        Page {page} of {totalPages}
+                                    </span>
+                                    <button 
+                                        className="button secondary" 
+                                        disabled={page === totalPages}
+                                        onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                    >
+                                        Next
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -1188,6 +1437,7 @@ and accurate citations help save lives.`}</pre>
             const tabs = [
                 { id: 'overview', label: 'Overview', component: OverviewTab },
                 { id: 'findings', label: 'Findings', component: FindingsTab },
+                { id: 'hypotheses', label: 'Hypotheses', component: HypothesesTab },
                 { id: 'agents', label: 'Agents', component: AgentsTab },
                 { id: 'qc', label: 'QC', component: QCTab },
                 { id: 'papers', label: 'Papers', component: PapersTab },

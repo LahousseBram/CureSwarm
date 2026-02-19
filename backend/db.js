@@ -61,6 +61,8 @@ async function createTables() {
       assigned_to TEXT REFERENCES agents(id),
       assigned_at TIMESTAMPTZ,
       is_synthesis BOOLEAN DEFAULT false,
+      is_hypothesis BOOLEAN DEFAULT false,
+      metadata JSONB,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
@@ -98,6 +100,7 @@ async function createTables() {
       confidence TEXT CHECK (confidence IN ('high', 'medium', 'low')),
       contradictions TEXT,
       research_gaps TEXT,
+      study_assessment JSONB,
       qc_status TEXT DEFAULT 'pending',
       qc_reviews INTEGER DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -124,6 +127,25 @@ async function createTables() {
       reviewer_id TEXT REFERENCES agents(id),
       verdict TEXT CHECK (verdict IN ('passed', 'flagged', 'rejected')),
       reasoning TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Hypotheses
+    CREATE TABLE IF NOT EXISTS hypotheses (
+      id TEXT PRIMARY KEY,
+      task_id TEXT REFERENCES tasks(id),
+      agent_id TEXT REFERENCES agents(id),
+      division_id TEXT REFERENCES divisions(id),
+      mission_id TEXT REFERENCES missions(id),
+      hypothesis TEXT NOT NULL,
+      supporting_evidence TEXT NOT NULL,
+      experimental_approach TEXT NOT NULL,
+      expected_impact TEXT,
+      feasibility INTEGER CHECK (feasibility BETWEEN 1 AND 5),
+      status TEXT DEFAULT 'proposed',
+      qc_status TEXT DEFAULT 'pending',
+      votes_up INTEGER DEFAULT 0,
+      votes_down INTEGER DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
@@ -231,13 +253,19 @@ async function getNextTask(agentId) {
     return null;
   }
 
-  // Try to get a QC task first (30% chance)
-  if (Math.random() < 0.3) {
+  // Try to get a hypothesis task first (10% chance)
+  if (Math.random() < 0.1) {
+    const hypothesisTask = await getHypothesisTask(agentId);
+    if (hypothesisTask) return hypothesisTask;
+  }
+
+  // Try to get a QC task (25% chance)
+  if (Math.random() < 0.25) {
     const qcTask = await getQCTask(agentId);
     if (qcTask) return qcTask;
   }
 
-  // Get research task based on agent's division scores
+  // Get research task based on agent's division scores (65% chance)
   return await getResearchTask(agentId);
 }
 
@@ -388,7 +416,139 @@ async function getResearchTask(agentId) {
   return null;
 }
 
-async function submitFinding({ taskId, agentId, summary, confidence, contradictions, researchGaps, citations }) {
+async function getHypothesisTask(agentId) {
+  // Check if there are divisions with 15+ passed findings with contradictions or research gaps
+  const eligibleDivisions = await supabase
+    .from('findings')
+    .select('division_id, contradictions, research_gaps')
+    .eq('qc_status', 'passed')
+    .not('contradictions', 'is', null)
+    .or('not.research_gaps.is.null')
+    .order('created_at', { ascending: false });
+
+  if (eligibleDivisions.error) return null;
+
+  // Group by division and check which have 15+ findings
+  const divisionCounts = {};
+  eligibleDivisions.data?.forEach(finding => {
+    const divId = finding.division_id;
+    if (!divisionCounts[divId]) divisionCounts[divId] = [];
+    divisionCounts[divId].push(finding);
+  });
+
+  const eligibleDivs = Object.entries(divisionCounts)
+    .filter(([_, findings]) => findings.length >= 15)
+    .map(([divId, findings]) => ({ divisionId: divId, findings }));
+
+  if (eligibleDivs.length === 0) return null;
+
+  // Select a random eligible division
+  const selectedDiv = eligibleDivs[Math.floor(Math.random() * eligibleDivs.length)];
+  
+  // Generate hypothesis task
+  await generateHypothesisTasks(selectedDiv.divisionId);
+  
+  // Try to get the newly generated hypothesis task
+  const { data: hypothesisTasks, error } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('division_id', selectedDiv.divisionId)
+    .eq('status', 'pending')
+    .eq('is_hypothesis', true)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error || !hypothesisTasks?.length) return null;
+
+  const selectedTask = hypothesisTasks[0];
+  
+  // Assign task to agent
+  const { error: updateError } = await supabase
+    .from('tasks')
+    .update({
+      status: 'assigned',
+      assigned_to: agentId,
+      assigned_at: new Date().toISOString()
+    })
+    .eq('id', selectedTask.id);
+
+  if (updateError) return null;
+
+  return {
+    type: 'hypothesis',
+    task: selectedTask
+  };
+}
+
+async function generateHypothesisTasks(divisionId) {
+  try {
+    // Get passed findings with contradictions or research gaps
+    const { data: findings, error } = await supabase
+      .from('findings')
+      .select('*')
+      .eq('division_id', divisionId)
+      .eq('qc_status', 'passed')
+      .order('created_at', { ascending: false });
+
+    if (error || !findings?.length) return;
+
+    // Aggregate contradictions and research gaps
+    const contradictions = [];
+    const researchGaps = [];
+
+    findings.forEach(finding => {
+      if (finding.contradictions) {
+        contradictions.push(finding.contradictions);
+      }
+      if (finding.research_gaps) {
+        researchGaps.push(finding.research_gaps);
+      }
+    });
+
+    if (contradictions.length === 0 && researchGaps.length === 0) return;
+
+    // Get division info
+    const { data: division, error: divError } = await supabase
+      .from('divisions')
+      .select('*')
+      .eq('id', divisionId)
+      .single();
+
+    if (divError || !division) return;
+
+    // Create hypothesis task
+    const taskId = crypto.randomUUID();
+    
+    const task = {
+      id: taskId,
+      division_id: divisionId,
+      mission_id: division.mission_id,
+      topic: `Hypothesis Generation for ${division.name}`,
+      description: `Based on ${findings.length} research findings in ${division.name}, generate 2-3 testable hypotheses that address the identified contradictions and research gaps. Include hypothesis statements, supporting evidence, experimental approaches, expected impact, and feasibility ratings.`,
+      search_queries: [`${division.name} research hypotheses`, `${division.name} future research directions`],
+      status: 'pending',
+      is_synthesis: false,
+      is_hypothesis: true,
+      metadata: JSON.stringify({
+        contradictions: contradictions.slice(0, 5), // Top 5 contradictions
+        researchGaps: researchGaps.slice(0, 5), // Top 5 research gaps
+        findingCount: findings.length
+      })
+    };
+
+    const { error: insertError } = await supabase
+      .from('tasks')
+      .insert(task);
+
+    if (insertError) {
+      console.warn('Hypothesis task generation error:', insertError);
+    }
+  } catch (error) {
+    console.warn('Generate hypothesis tasks error:', error);
+  }
+}
+
+async function submitFinding({ taskId, agentId, summary, confidence, contradictions, researchGaps, citations, studyAssessment }) {
   // Check for duplicate finding per task
   const { data: existingFinding } = await supabase
     .from('findings')
@@ -423,7 +583,8 @@ async function submitFinding({ taskId, agentId, summary, confidence, contradicti
       summary,
       confidence,
       contradictions,
-      research_gaps: researchGaps
+      research_gaps: researchGaps,
+      study_assessment: studyAssessment
     })
     .select()
     .single();
@@ -638,7 +799,7 @@ async function getDivisions() {
   return data;
 }
 
-async function getFindings(page = 1, limit = 20, divisionId = null) {
+async function getFindings(page = 1, limit = 20, divisionId = null, minMethodology = null) {
   let query = supabase
     .from('findings')
     .select(`
@@ -651,6 +812,10 @@ async function getFindings(page = 1, limit = 20, divisionId = null) {
 
   if (divisionId) {
     query = query.eq('division_id', divisionId);
+  }
+
+  if (minMethodology) {
+    query = query.gte('study_assessment->methodology_score', minMethodology);
   }
 
   const { data, error, count } = await query
@@ -687,6 +852,111 @@ async function getFinding(findingId) {
   return data;
 }
 
+async function submitHypothesis({ taskId, agentId, hypothesis, supportingEvidence, experimentalApproach, expectedImpact, feasibility }) {
+  const hypothesisId = crypto.randomUUID();
+  
+  // Get task info for division and mission
+  const { data: taskData, error: taskError } = await supabase
+    .from('tasks')
+    .select('division_id, mission_id')
+    .eq('id', taskId)
+    .single();
+
+  if (taskError) throw taskError;
+
+  // Insert hypothesis
+  const { data: hypothesisRecord, error: hypothesisError } = await supabase
+    .from('hypotheses')
+    .insert({
+      id: hypothesisId,
+      task_id: taskId,
+      agent_id: agentId,
+      division_id: taskData.division_id,
+      mission_id: taskData.mission_id,
+      hypothesis,
+      supporting_evidence: supportingEvidence,
+      experimental_approach: experimentalApproach,
+      expected_impact: expectedImpact,
+      feasibility
+    })
+    .select()
+    .single();
+
+  if (hypothesisError) throw hypothesisError;
+
+  // Update task status
+  const { error: updateTaskError } = await supabase
+    .from('tasks')
+    .update({ status: 'completed' })
+    .eq('id', taskId);
+
+  if (updateTaskError) throw updateTaskError;
+
+  // Update agent stats
+  const { data: currentAgent, error: getAgentError } = await supabase
+    .from('agents')
+    .select('tasks_completed')
+    .eq('id', agentId)
+    .single();
+
+  if (getAgentError) throw getAgentError;
+
+  const { error: updateAgentError } = await supabase
+    .from('agents')
+    .update({
+      tasks_completed: currentAgent.tasks_completed + 1
+    })
+    .eq('id', agentId);
+
+  if (updateAgentError) throw updateAgentError;
+
+  return hypothesisRecord;
+}
+
+async function getHypotheses(page = 1, limit = 20, divisionId = null) {
+  let query = supabase
+    .from('hypotheses')
+    .select(`
+      *,
+      agents:agent_id (name),
+      divisions:division_id (name),
+      tasks:task_id (topic)
+    `)
+    .order('votes_up', { ascending: false });
+
+  if (divisionId) {
+    query = query.eq('division_id', divisionId);
+  }
+
+  const { data, error, count } = await query
+    .range((page - 1) * limit, page * limit - 1);
+
+  if (error) throw error;
+
+  return {
+    hypotheses: data,
+    totalCount: count,
+    page,
+    limit
+  };
+}
+
+async function getHypothesis(hypothesisId) {
+  const { data, error } = await supabase
+    .from('hypotheses')
+    .select(`
+      *,
+      agents:agent_id (name, model),
+      divisions:division_id (name),
+      tasks:task_id (topic, metadata)
+    `)
+    .eq('id', hypothesisId)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   supabase,
   initDatabase,
@@ -701,5 +971,9 @@ module.exports = {
   getDivisions,
   getFindings,
   getFinding,
-  updateDivisionScore
+  updateDivisionScore,
+  generateHypothesisTasks,
+  submitHypothesis,
+  getHypotheses,
+  getHypothesis
 };
