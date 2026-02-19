@@ -1,0 +1,29 @@
+{
+  "name": "cureswarm-frontend",
+  "version": "1.0.0",
+  "description": "CureSwarm Frontend Dashboard - Multi-Agent AMR Research Platform",
+  "main": "index.html",
+  "scripts": {
+    "serve": "npx http-server . -p 8080"
+  },
+  "keywords": [
+    "antimicrobial-resistance",
+    "amr",
+    "multi-agent",
+    "research",
+    "ai",
+    "healthcare",
+    "dashboard"
+  ],
+  "author": "CureSwarm Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/cureswarm.git"
+  },
+  "homepage": "https://cureswarm.org",
+  "dependencies": {},
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
