@@ -590,8 +590,11 @@ app.post('/api/v1/papers/generate', requireAdminKey, async (req, res) => {
 // Serve frontend
 app.use(express.static(path.join(__dirname, '../frontend')));
 
-// Catch-all handler for SPA
+// Catch-all handler for SPA (exclude API routes)
 app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
   res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
