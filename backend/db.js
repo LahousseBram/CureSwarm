@@ -771,13 +771,19 @@ async function getStats() {
     { count: totalFindings },
     { count: totalTasks },
     { count: completedTasks },
-    { count: passedFindings }
+    { count: passedFindings },
+    { count: activeTasks },
+    { count: qcReviews },
+    { count: totalCitations }
   ] = await Promise.all([
     supabase.from('agents').select('*', { count: 'exact', head: true }),
     supabase.from('findings').select('*', { count: 'exact', head: true }),
     supabase.from('tasks').select('*', { count: 'exact', head: true }),
     supabase.from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'completed'),
-    supabase.from('findings').select('*', { count: 'exact', head: true }).eq('qc_status', 'passed')
+    supabase.from('findings').select('*', { count: 'exact', head: true }).eq('qc_status', 'passed'),
+    supabase.from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'assigned'),
+    supabase.from('qc_reviews').select('*', { count: 'exact', head: true }),
+    supabase.from('citations').select('*', { count: 'exact', head: true })
   ]);
 
   return {
@@ -785,6 +791,10 @@ async function getStats() {
     totalFindings,
     totalTasks,
     completedTasks,
+    activeTasks,
+    qcReviews,
+    totalCitations,
+    passRate: totalFindings > 0 ? passedFindings / totalFindings : 0,
     qcPassRate: totalFindings > 0 ? (passedFindings / totalFindings) * 100 : 0
   };
 }
