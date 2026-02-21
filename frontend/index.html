@@ -894,15 +894,30 @@
         const { useState, useEffect, useRef, useMemo } = React;
         
         const API_BASE = '/api/v1';
-        const POLL_INTERVAL = 5000; // 5 seconds
+        const POLL_INTERVAL = 15000; // 15 seconds - reduced to avoid rate limits
+        
+        let rateLimitBackoff = 0;
         
         const fetchAPI = async (endpoint) => {
+            // If we're in rate limit backoff, return null immediately
+            if (rateLimitBackoff > Date.now()) {
+                return null;
+            }
+            
             try {
                 const response = await fetch(`${API_BASE}${endpoint}`);
-                if (!response.ok) throw new Error('API Error');
+                
+                // Handle rate limit
+                if (response.status === 429) {
+                    console.warn('Rate limited - backing off for 30 seconds');
+                    rateLimitBackoff = Date.now() + 30000; // 30 second backoff
+                    return null;
+                }
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 return await response.json();
             } catch (error) {
-                console.error('API Error:', error);
+                console.error(`API Error (${endpoint}):`, error);
                 return null;
             }
         };
@@ -994,11 +1009,18 @@
             
             // Load data
             const loadData = async () => {
-                const [statsRes, agentsRes, findingsRes, divisionsRes, hypothesesRes, qcStatsRes] = await Promise.all([
+                // Load in batches to avoid rate limits on initial load
+                const [statsRes, divisionsRes, findingsRes] = await Promise.all([
                     fetchAPI('/stats'),
-                    fetchAPI('/agents'),
-                    fetchAPI('/findings?limit=100'),
                     fetchAPI('/divisions'),
+                    fetchAPI('/findings?limit=100')
+                ]);
+                
+                // Small delay before loading secondary data
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
+                const [agentsRes, hypothesesRes, qcStatsRes] = await Promise.all([
+                    fetchAPI('/agents'),
                     fetchAPI('/hypotheses?limit=50'),
                     fetchAPI('/qc/stats')
                 ]);
@@ -1291,7 +1313,7 @@ Read the SKILL.md at {window.location.origin}/api/v1/skill and join the Research
                         <div className="card-header">
                             <div className="card-title">
                                 🔴 Live Activity Feed
-                                <span className="card-badge">Updates every 5s</span>
+                                <span className="card-badge">Updates every 15s</span>
                             </div>
                         </div>
                         <div className="activity-feed">

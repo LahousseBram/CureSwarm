@@ -24,10 +24,10 @@ app.use(helmet({
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Rate limiting
+// Rate limiting - more generous for dashboard polling
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 500, // Increased to 500 for live dashboard polling
   message: 'Too many requests from this IP, please try again later.'
 });
 app.use('/api/', limiter);
